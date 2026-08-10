@@ -1,0 +1,81 @@
+name: CD Pipeline
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'terraform/**'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  TERRAFORM_VERSION: "1.13.1"
+
+jobs:
+  plan:
+    name: Plan (Pre-Deploy)
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: terraform
+    env:
+      AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
+      AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: ${{ env.TERRAFORM_VERSION }}
+      - uses: actions/cache@v4
+        with:
+          path: |
+            terraform/.terraform
+            terraform/.terraform.lock.hcl
+          key: tf-cd-${{ hashFiles('terraform/.terraform.lock.hcl') }}
+          restore-keys: tf-cd-
+      - run: terraform init -backend=false
+
+      - name: Terraform Plan
+        if: env.AWS_ACCESS_KEY_ID != ''
+        run: terraform plan -no-color -input=false -out=tfplan
+
+      - name: Skip Plan (no AWS credentials)
+        if: env.AWS_ACCESS_KEY_ID == ''
+        run: echo "AWS credentials not configured — skipping terraform plan."
+
+  deploy:
+    name: Deploy to Production
+    needs: [plan]
+    runs-on: ubuntu-latest
+    # Approval gate: the `production` environment requires a reviewer, so this
+    # job is held in "Waiting" until a human approves the deployment.
+    environment: production
+    defaults:
+      run:
+        working-directory: terraform
+    env:
+      AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
+      AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: ${{ env.TERRAFORM_VERSION }}
+      - uses: actions/cache@v4
+        with:
+          path: |
+            terraform/.terraform
+            terraform/.terraform.lock.hcl
+          key: tf-cd-${{ hashFiles('terraform/.terraform.lock.hcl') }}
+          restore-keys: tf-cd-
+      - run: terraform init -backend=false
+
+      - name: Terraform Apply
+        if: env.AWS_ACCESS_KEY_ID != ''
+        run: terraform apply -auto-approve -input=false
+
+      - name: Skip Apply (no AWS credentials)
+        if: env.AWS_ACCESS_KEY_ID == ''
+        run: echo "Approval granted, but AWS credentials are not configured — skipping terraform apply."

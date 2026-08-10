@@ -1,0 +1,131 @@
+name: CI Pipeline
+
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - 'terraform/**'
+      - '.github/workflows/ci.yml'
+
+permissions:
+  contents: read
+  pull-requests: write
+
+concurrency:
+  group: ci-${{ github.head_ref }}
+  cancel-in-progress: true
+
+env:
+  TERRAFORM_VERSION: "1.13.1"
+
+jobs:
+  format:
+    name: Terraform Format
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: terraform
+    steps:
+      - uses: actions/checkout@v4
+      - uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: ${{ env.TERRAFORM_VERSION }}
+      - name: Check formatting
+        run: terraform fmt -check -recursive -diff
+
+  validate:
+    name: Terraform Validate
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: terraform
+    steps:
+      - uses: actions/checkout@v4
+      - uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: ${{ env.TERRAFORM_VERSION }}
+      - uses: actions/cache@v4
+        with:
+          path: |
+            terraform/.terraform
+            terraform/.terraform.lock.hcl
+          key: tf-validate-${{ hashFiles('terraform/.terraform.lock.hcl') }}
+          restore-keys: tf-validate-
+      - run: terraform init -backend=false
+      - run: terraform validate
+
+  security-scan:
+    name: Security Scan (tfsec)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Run tfsec
+        uses: aquasecurity/tfsec-action@v1.0.3
+        with:
+          working_directory: terraform
+          soft_fail: true
+
+  plan:
+    name: Terraform Plan
+    needs: [format, validate, security-scan]
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: terraform
+    env:
+      AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
+      AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: ${{ env.TERRAFORM_VERSION }}
+      - uses: actions/cache@v4
+        with:
+          path: |
+            terraform/.terraform
+            terraform/.terraform.lock.hcl
+          key: tf-plan-${{ hashFiles('terraform/.terraform.lock.hcl') }}
+          restore-keys: tf-plan-
+      - run: terraform init -backend=false
+
+      # Conditional step: no AWS credentials configured means no plan to run
+      - name: Terraform Plan
+        id: plan
+        if: env.AWS_ACCESS_KEY_ID != ''
+        run: terraform plan -no-color -input=false
+
+      - name: Skip Plan (no AWS credentials)
+        if: env.AWS_ACCESS_KEY_ID == ''
+        run: echo "AWS credentials not configured — skipping terraform plan."
+
+      - name: Post CI results to PR
+        if: always()
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const output = `### CI Pipeline Results
+
+            | Check | Status |
+            |-------|--------|
+            | Format | \`${{ needs.format.result }}\` |
+            | Validate | \`${{ needs.validate.result }}\` |
+            | Security Scan | \`${{ needs.security-scan.result }}\` |
+            | Plan | \`${{ steps.plan.outcome || 'skipped (no AWS credentials)' }}\` |
+
+            <details><summary>Show Plan Output</summary>
+
+            \`\`\`
+            ${{ steps.plan.outputs.stdout || 'No plan output — AWS credentials are not configured in this repository.' }}
+            \`\`\`
+
+            </details>
+
+            *Triggered by: @${{ github.actor }} on \`${{ github.head_ref }}\`*`;
+
+            github.rest.issues.createComment({
+              issue_number: context.issue.number,
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              body: output
+            })

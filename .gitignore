@@ -1,6 +1,12 @@
-.terraform/
+# Terraform
 *.tfstate
 *.tfstate.*
+.terraform/
+crash.log
+*.tfvars
+!terraform.tfvars.example
+
+# Tooling
 node_modules/
 .vscode/
 .idea/

@@ -1,112 +1,95 @@
-# Lab M5.10 - CI/CD Best Practices Implementation
+# CI/CD Best Practices — Terraform Infrastructure
 
-**Cloud Engineering Bootcamp - Week 5, Day 5**  
-**Module:** Cloud Automation & CI/CD
+[![CI Pipeline](https://github.com/Draian123/ce-lab-cicd-best-practices/actions/workflows/ci.yml/badge.svg)](https://github.com/Draian123/ce-lab-cicd-best-practices/actions/workflows/ci.yml)
+[![CD Pipeline](https://github.com/Draian123/ce-lab-cicd-best-practices/actions/workflows/cd.yml/badge.svg)](https://github.com/Draian123/ce-lab-cicd-best-practices/actions/workflows/cd.yml)
+[![Commit Lint](https://github.com/Draian123/ce-lab-cicd-best-practices/actions/workflows/commit-lint.yml/badge.svg)](https://github.com/Draian123/ce-lab-cicd-best-practices/actions/workflows/commit-lint.yml)
+[![Release](https://github.com/Draian123/ce-lab-cicd-best-practices/actions/workflows/release.yml/badge.svg)](https://github.com/Draian123/ce-lab-cicd-best-practices/actions/workflows/release.yml)
 
-## Start Here: Fork, Clone, and Submit    
+**Lab M5.10 — Cloud Engineering Bootcamp, Week 5, Day 5.** A production-grade Terraform repository
+with CI/CD wired in from the first commit: enforced commit conventions, automated versioning, a full
+CI gate, and a CD pipeline that will not deploy without a human saying yes.
 
-You will complete this lab by working in **your own fork** of the lab repository and submitting a **Pull Request (PR)**.
+## Architecture
 
-1. **Fork the lab repository** to your GitHub account.
-2. **Clone your fork** locally:
-   ```bash
-   git clone https://github.com/<your-github-username>/ce-lab-cicd-best-practices.git
-   cd ce-lab-cicd-best-practices
-   ```
-3. **Follow all instructions below** and save your work in this repo (files, screenshots, and notes).
-4. **When finished, submit your work:**
-   - `git add` → `git commit` → `git push`
-   - Open a **Pull Request** from your fork back to the original lab repo
-   - Copy the **PR URL** and paste it into the **Lab Submission** field in the Student Portal
+This repository manages shared infrastructure resources:
 
-## 📋 Lab Overview
+- **S3 bucket** — versioned artifact storage with AES256 encryption, a full public-access block, and a
+  lifecycle rule that moves objects to `STANDARD_IA` after 90 days and expires noncurrent versions
+  after 180 days
+- **DynamoDB table** — application state store (`PK`/`SK` composite key, on-demand billing) with
+  point-in-time recovery, server-side encryption, and TTL on `ExpiresAt`
 
-Implement comprehensive CI/CD best practices including testing, security, monitoring, and documentation to create a production-ready pipeline.
+## CI/CD Workflows
 
-## 🎯 Learning Objectives
+| Workflow | Trigger | Purpose |
+|----------|---------|---------|
+| [CI Pipeline](.github/workflows/ci.yml) | PR to `main` (paths: `terraform/**`) | Format, validate, security scan, plan |
+| [CD Pipeline](.github/workflows/cd.yml) | Push to `main` (paths: `terraform/**`) | Plan, then deploy behind a manual approval gate |
+| [Commit Lint](.github/workflows/commit-lint.yml) | PR opened / edited / synchronized | Enforce conventional PR titles |
+| [Release Please](.github/workflows/release.yml) | Push to `main` | Automated versioning and changelog |
 
-- Implement comprehensive testing in pipelines
-- Configure security scanning and compliance checks
-- Set up monitoring and alerting
-- Implement audit logging
-- Document CI/CD processes
-- Follow industry best practices
+### The CI gate
 
-## 📁 Repository Structure
+```
+format ──┐
+validate ─┼── plan ── PR comment with results table
+tfsec ───┘
+```
+
+`format`, `validate` and `security-scan` run in parallel; `plan` waits for all three via
+`needs: [format, validate, security-scan]`. A `concurrency` group cancels superseded runs when a
+branch is pushed twice in quick succession, and a `paths:` filter keeps the pipeline out of the way
+of documentation-only changes.
+
+### The CD gate
+
+`plan` runs automatically on merge. `deploy` declares `environment: production`, which has a
+**required reviewer** configured — the job sits in *Waiting* until a human approves it in the
+Actions UI. Nothing is applied before that click.
+
+## Quick Start
+
+```bash
+cd terraform
+terraform init
+terraform plan
+terraform apply
+```
+
+## Repository Structure
 
 ```
 ce-lab-cicd-best-practices/
-├── .github/
-│   └── workflows/
-│       ├── comprehensive-ci.yml
-│       ├── security-scan.yml
-│       ├── compliance-check.yml
-│       └── monitoring.yml
+├── .github/workflows/
+│   ├── ci.yml                    # format ∥ validate ∥ tfsec → plan
+│   ├── cd.yml                    # plan → deploy (manual approval)
+│   ├── commit-lint.yml           # conventional PR titles
+│   └── release.yml               # release-please semantic versioning
+├── terraform/
+│   ├── main.tf                   # S3 artifacts bucket + DynamoDB state table
+│   ├── variables.tf              # with validation on `environment`
+│   └── outputs.tf
 ├── docs/
-│   ├── PIPELINE.md
-│   ├── SECURITY.md
-│   └── RUNBOOK.md
-├── tests/
-├── README.md
-└── .gitignore
+│   ├── POSTMORTEM_TEMPLATE.md    # deployment failure playbook
+│   └── screenshots/              # evidence from the Actions runs
+├── CONTRIBUTING.md               # commit conventions and PR process
+├── version.txt                   # tracked by release-please
+└── README.md
 ```
 
-## ✅ Submission Requirements
+## Contributing
 
-1. **Comprehensive CI/CD Pipeline**
-   - Multi-stage testing (unit, integration, e2e)
-   - Security scanning (SAST, dependency check)
-   - Compliance validation
-   - Automated deployment
+See [CONTRIBUTING.md](CONTRIBUTING.md) for commit conventions, the PR process, and CI/CD guidelines.
+When a deployment goes wrong, write it up with
+[docs/POSTMORTEM_TEMPLATE.md](docs/POSTMORTEM_TEMPLATE.md).
 
-2. **Security Implementation**
-   - Vulnerability scanning
-   - Secret scanning
-   - Code quality checks
-   - License compliance
+## Notes on this implementation
 
-3. **Monitoring & Observability**
-   - Pipeline metrics
-   - Deployment notifications
-   - Error alerting
-
-4. **Documentation**
-   - Pipeline architecture diagram
-   - Runbooks and troubleshooting guides
-   - Security and compliance documentation
-
-## 🎓 Grading Rubric
-
-| Criteria | Points |
-|----------|--------|
-| **Pipeline Completeness** | 30 |
-| **Security Implementation** | 25 |
-| **Monitoring & Alerts** | 20 |
-| **Documentation** | 25 |
-| **Total** | 100 |
-
-## 💡 Tips
-
-- Start with a working pipeline, then add features
-- Implement security checks early
-- Document as you build
-- Use pipeline templates for consistency
-- Monitor pipeline metrics continuously
-
-## 📚 Resources
-
-- [GitHub Actions Security Best Practices](https://docs.github.com/en/actions/security-guides)
-- [CI/CD Best Practices](https://about.gitlab.com/topics/ci-cd/ci-cd-best-practices/)
-- [OWASP CI/CD Security](https://owasp.org/www-project-devsecops-guideline/)
-
-## 🚀 Submission
-
-Complete the lab as described in the instructions and save your work in this repo (files, screenshots, notes, etc.).
-
-**Reminder:** After pushing your work and opening a PR:
-- Copy the **PR URL**
-- Paste it into the **Lab Submission** field in the Student Portal
-
----
-
-**Congratulations!** This is the final lab of Week 5. You've learned comprehensive CI/CD automation practices that are essential for modern cloud engineering. Apply these practices in all your future projects!
+- **Terraform 1.13.1**, not the 1.6.0 shown in the lab handout. HashiCorp's release signing key
+  (`72D7468F`) expired on 2026-04-18, and Terraform 1.6.0 ships an embedded copy of it, so
+  `terraform init` fails with `openpgp: key expired` and cannot install any provider. The version is
+  set once per workflow via a `TERRAFORM_VERSION` env var so there is a single place to bump it.
+- **`terraform plan` and `terraform apply` are guarded** by `if: env.AWS_ACCESS_KEY_ID != ''`. No AWS
+  credentials are configured in this repository, so those steps report as skipped instead of failing
+  the pipeline. Adding `AWS_ACCESS_KEY_ID` / `AWS_SECRET_ACCESS_KEY` as repository secrets turns them
+  on with no other change. The approval gate is unaffected — it fires before the job runs at all.
